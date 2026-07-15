@@ -188,6 +188,14 @@ class JointParamsMixin:
         description="Stem diameter as a fraction of the ball diameter",
         default=0.45, min=0.3, max=0.7,
     )
+    ball_relief: bpy.props.BoolProperty(
+        name="Face Relief",
+        description="Dish the face around the socket so the joint can "
+        "swing the full range of motion. Disable to keep the model "
+        "surface intact — the joint then only twists and has minimal "
+        "swing (fine for narrow necks where the surface curves away)",
+        default=True,
+    )
     hinge_rom: bpy.props.FloatProperty(
         name="Range of Motion", subtype='ANGLE',
         description="Symmetric bend limit of the hinge (± this angle)",
@@ -209,8 +217,19 @@ class JointParamsMixin:
     swivel_slits: bpy.props.BoolProperty(
         name="Elastic Slits",
         description="Cross-slit the mushroom cap so it compresses during "
-        "snap-in (applied when the cap is large enough)",
+        "snap-in — easier to assemble but also easier to pull out",
+        default=False,
+    )
+    cyl_snap: bpy.props.BoolProperty(
+        name="Snap Ring",
+        description="Add a click-lock ridge on the pin and a matching "
+        "groove in the socket so the parts hold without glue",
         default=True,
+    )
+    cyl_snap_mm: bpy.props.FloatProperty(
+        name="Ring Height (mm)",
+        description="Net radial engagement of the snap ring",
+        default=0.3, min=0.1, max=1.0, precision=2,
     )
 
     def seed_defaults(self, context):
@@ -227,10 +246,13 @@ class JointParamsMixin:
             'flare': self.dovetail_flare,
             'draft': self.dovetail_draft,
             'taper': self.cyl_taper,
+            'snap': self.cyl_snap,
+            'snap_mm': self.cyl_snap_mm,
             'cross_taper': self.cross_taper,
             'opening_ratio': self.ball_opening_ratio,
             'rom': self.ball_rom,
             'neck_ratio': self.ball_neck_ratio,
+            'relief': self.ball_relief,
             'hinge_rom': self.hinge_rom,
             'tongue': self.hinge_tongue,
             'undercut_mm': self.swivel_undercut_mm,

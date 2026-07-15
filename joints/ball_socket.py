@@ -57,8 +57,10 @@ def socket_cutter(size, params, clearance, seg, sign=1.0):
     # the female face around the socket is dished into a funnel of the
     # ROM angle — otherwise the faces collide on the first degree of
     # rotation. (Action figures dish their sockets the same way.)
+    # Optional: with relief off, only the socket itself is carved and the
+    # joint is twist-only on flat faces.
     theta = params['rom']
-    if theta > 1e-4:
+    if theta > 1e-4 and params.get('relief', True):
         opening = rho * radius + c
         r_relief = params.get('_ball_r_relief', 3.0 * radius)
         z_top = (r_relief - opening) * math.tan(theta)
@@ -142,4 +144,5 @@ class BallSocketShape(JointShape):
         layout.prop(op, "ball_opening_ratio")
         layout.prop(op, "ball_rom")
         layout.prop(op, "ball_neck_ratio")
+        layout.prop(op, "ball_relief")
         layout.prop(op, "segments")

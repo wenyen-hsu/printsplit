@@ -17,8 +17,10 @@ def _dims(size, params):
     h_c = max(size.depth - z_n, 0.4 * r_s)
     # Undercut is specified NET of clearance AND of the polygonal facet
     # envelope (the neck bore is circumscribed so the peg can spin), so
-    # neither can eat the retention lip.
-    u = params['undercut_mm'] * unit_mm
+    # neither can eat the retention lip. A proportional floor keeps the
+    # grip comparable to the ball joint's on larger models instead of
+    # staying a fixed fraction of a millimetre.
+    u = max(params['undercut_mm'] * unit_mm, 0.12 * r_s)
     fs = _solids.facet_scale(params['segments'])
     r_c = (r_s + c) * fs + u
     return r_s, z_n, h_c, u, r_c, c
@@ -57,7 +59,7 @@ class SwivelShape(JointShape):
                          thickness=2.0 * r_s, embed=embed)
 
     def build_male(self, size, params):
-        r_s, z_n, h_c, _u, r_c, _c = _dims(size, params)
+        r_s, z_n, h_c, _u, r_c, c = _dims(size, params)
         seg = params['segments']
         # Straight stem: it must pass the neck channel (r_s + c), so any
         # root flare stays strictly below the seam as its own shell.
@@ -65,7 +67,9 @@ class SwivelShape(JointShape):
         flare = _solids.cone(r_s * 1.3, r_s, -size.embed,
                              -0.1 * size.embed, seg)
         _solids.merge(bm, flare)
-        cap = _solids.cone(r_c, 0.6 * r_c, z_n, z_n + h_c, seg)
+        # Cap shoulder starts one clearance above the retention lip so
+        # the joint doesn't bind axially.
+        cap = _solids.cone(r_c, 0.6 * r_c, z_n + c, z_n + h_c, seg)
         return _solids.merge(bm, cap)
 
     def build_male_cutter(self, size, params, clearance):

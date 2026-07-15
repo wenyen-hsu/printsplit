@@ -145,6 +145,33 @@ def test_swivel_slits_cut_the_cap():
     assert va_slits < va_solid - 1e-9, "slits should remove cap material"
 
 
+def test_cylinder_snap_ring_retains():
+    """The default snap ring must click-lock the pin; without it the
+    tapered pin pulls out freely."""
+    male, female = _generate('CYLINDER', clearance_mm=0.3, cyl_snap=True)
+    assert _rest_intersection(male, female) < 1e-6
+    ix = _moved_ix(male, female, offset=Vector((0, 0, 0.05)))
+    assert ix > 1e-9, "snap ring should retain the pin"
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    male, female = _generate('CYLINDER', clearance_mm=0.3, cyl_snap=False)
+    ix = _moved_ix(male, female, offset=Vector((0, 0, 0.05)))
+    assert ix < 1e-9, "plain tapered pin should pull out freely"
+
+
+def test_ball_relief_optional():
+    """Face Relief off must leave the female face intact (more material
+    kept) while the socket itself is still carved."""
+    male, female = _generate('BALL_SOCKET', ball_relief=True)
+    vb_dished = mesh_volume(female.data)
+    bpy.ops.wm.read_homefile(use_empty=True)
+    male, female = _generate('BALL_SOCKET', ball_relief=False)
+    vb_intact = mesh_volume(female.data)
+    assert vb_intact > vb_dished + 1e-4, (
+        "relief off should keep the face material")
+    assert vb_intact < 4.0, "socket must still be carved"
+
+
 # ---------------------------------------------------------- BALL SOCKET
 
 def test_ball_socket_retention():

@@ -47,4 +47,5 @@ class DoubleBallShape(BallSocketShape):
     def draw(self, layout, op):
         layout.prop(op, "ball_opening_ratio")
         layout.prop(op, "ball_rom")
+        layout.prop(op, "ball_relief")
         layout.prop(op, "segments")
