@@ -1,0 +1,41 @@
+name: tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        blender: ["4.2.9", "4.5.1"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/blender-${{ matrix.blender }}
+          key: blender-${{ matrix.blender }}-linux-x64
+
+      - name: Download Blender
+        run: |
+          DIR="$HOME/blender-${{ matrix.blender }}"
+          if [ ! -x "$DIR/blender" ]; then
+            MM=$(echo "${{ matrix.blender }}" | cut -d. -f1,2)
+            curl -fsSL "https://download.blender.org/release/Blender${MM}/blender-${{ matrix.blender }}-linux-x64.tar.xz" -o /tmp/blender.tar.xz
+            mkdir -p "$DIR"
+            tar -xf /tmp/blender.tar.xz -C "$DIR" --strip-components=1
+          fi
+
+      - name: Install headless dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxi6 libxxf86vm1 libxfixes3 \
+            libxrender1 libgl1 libsm6 libxkbcommon0 libembree4-4 || \
+          sudo apt-get install -y libxi6 libxxf86vm1 libxfixes3 \
+            libxrender1 libgl1 libsm6 libxkbcommon0
+
+      - name: Run tests
+        run: |
+          "$HOME/blender-${{ matrix.blender }}/blender" --background \
+            --factory-startup --python tests/run_tests.py

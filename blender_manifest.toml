@@ -1,0 +1,18 @@
+schema_version = "1.0.0"
+
+id = "printsplit"
+version = "0.2.0"
+name = "PrintSplit"
+tagline = "Split meshes and generate interlocking joints for 3D printing"
+maintainer = "Wen Hsu <vm3jp6u04@gmail.com>"
+type = "add-on"
+
+website = "https://github.com/wenyen-hsu/printsplit"
+
+tags = ["Mesh", "3D View", "Object"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
