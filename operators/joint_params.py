@@ -194,6 +194,12 @@ class JointParamsMixin:
         default=math.radians(45.0),
         min=math.radians(5.0), max=math.radians(80.0),
     )
+    hinge_tongue: bpy.props.FloatProperty(
+        name="Tongue Thickness",
+        description="Tongue (neck) thickness as a fraction of the pivot "
+        "height — thicker is stronger but widens the swing slot",
+        default=0.7, min=0.3, max=0.9,
+    )
     swivel_undercut_mm: bpy.props.FloatProperty(
         name="Undercut (mm)",
         description="Net retention lip of the mushroom cap (survives "
@@ -226,6 +232,7 @@ class JointParamsMixin:
             'rom': self.ball_rom,
             'neck_ratio': self.ball_neck_ratio,
             'hinge_rom': self.hinge_rom,
+            'tongue': self.hinge_tongue,
             'undercut_mm': self.swivel_undercut_mm,
             'slits': self.swivel_slits,
             'segments': self.segments,

@@ -29,7 +29,9 @@ def _dims(size, params):
     c = params['clearance']
     z_h = 0.5 * size.depth       # pivot height above the seam
     r_k = z_h                    # knuckle radius = envelope radius
-    n_y = 0.5 * z_h              # tongue thickness along Y
+    # Tongue thickness along Y. Thicker = stronger, but it widens the
+    # V-slot; retention holds up to ~0.9 at 45 degrees ROM.
+    n_y = params['tongue'] * z_h
     return z_h, r_k, n_y, c
 
 
@@ -113,4 +115,5 @@ class HingeShape(JointShape):
 
     def draw(self, layout, op):
         layout.prop(op, "hinge_rom")
+        layout.prop(op, "hinge_tongue")
         layout.prop(op, "segments")
