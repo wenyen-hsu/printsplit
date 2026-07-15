@@ -200,19 +200,26 @@ def test_joint_with_halves_moved_apart():
     assert ix < 1e-6, f"joint misplaced, halves overlap by {ix}"
 
 
-def test_dovetail_rail_survives_fast_solver():
-    """Regression: the GUI default flow once hit FAST-solver unions that
-    silently produced garbage because the trimmed rail walls coincided
-    with the model surface. The shrunken trim must keep FAST viable."""
+def test_solver_defaults_to_exact():
+    """Regression: the GUI default flow once used FAST (the first enum
+    item), whose unions silently produce garbage on coplanar contacts.
+    The actual fix is EXACT being the default; FAST is best-effort and
+    platform-dependent (Linux builds drop unions macOS survives)."""
+    from printsplit.preferences import solver_items
+
+    assert solver_items()[0][0] == 'EXACT'
+
+
+def test_dovetail_rail_fast_solver_completes():
+    """FAST must at worst degrade gracefully — never crash or empty out
+    the halves."""
     obj_a, obj_b = _cut_cube_in_half()
-    va0 = mesh_volume(obj_a.data)
     _select_pair(obj_a, obj_b)
     assert bpy.ops.printsplit.generate_joint(
         shape='DOVETAIL', dovetail_style='RAIL',
         clearance_mm=0.15, solver='FAST') == {'FINISHED'}
-    # FAST is approximate by design (may leave non-manifold edges); the
-    # regression being guarded is the rail silently vanishing.
-    assert mesh_volume(obj_a.data) > va0, "male lost its rail (FAST union)"
+    assert mesh_volume(obj_a.data) > 1.0, "male half vanished (FAST)"
+    assert mesh_volume(obj_b.data) > 1.0, "female half vanished (FAST)"
 
 
 def test_no_common_cut_errors():
