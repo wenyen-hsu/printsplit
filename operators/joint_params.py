@@ -199,8 +199,16 @@ class JointParamsMixin:
     hinge_rom: bpy.props.FloatProperty(
         name="Range of Motion", subtype='ANGLE',
         description="Symmetric bend limit of the hinge (± this angle)",
-        default=math.radians(45.0),
+        default=math.radians(30.0),
         min=math.radians(5.0), max=math.radians(80.0),
+    )
+    hinge_relief: bpy.props.BoolProperty(
+        name="Face Relief",
+        description="Carve the female face into wedges so the parts can "
+        "bend the full range even on a wide flat cut — removes a lot of "
+        "material. Leave off when cutting at a narrow section (elbow, "
+        "knee), where the surrounding shape clears by itself",
+        default=False,
     )
     hinge_tongue: bpy.props.FloatProperty(
         name="Tongue Thickness",
@@ -254,6 +262,7 @@ class JointParamsMixin:
             'neck_ratio': self.ball_neck_ratio,
             'relief': self.ball_relief,
             'hinge_rom': self.hinge_rom,
+            'hinge_relief': self.hinge_relief,
             'tongue': self.hinge_tongue,
             'undercut_mm': self.swivel_undercut_mm,
             'slits': self.swivel_slits,

@@ -93,10 +93,14 @@ class HingeShape(JointShape):
              (y_top, z_h + 0.3 * r_k), (-y_top, z_h + 0.3 * r_k)],
             -half_x, half_x)
         _solids.merge(bm, slot)
-        # 3. Range-of-motion wedges on the seam face: the male's rotated
-        #    face line is z(y) = |y|*tan(theta) - z_h*(1/cos(theta) - 1);
-        #    cut the region between the seam and that line as one
-        #    triangular prism per side.
+        # 3. Optional range-of-motion wedges on the seam face: the male's
+        #    rotated face line is z(y) = |y|*tan(theta) - z_h*(1/cos(theta)
+        #    - 1); cut the region between the seam and that line as one
+        #    triangular prism per side. Off by default — it guarantees
+        #    full ROM on wide flat cuts but removes a lot of the model;
+        #    at a narrow cut section the surroundings clear by themselves.
+        if not params.get('hinge_relief', False):
+            return bm
         y_max = params.get('_hinge_ymax', size.thickness * 3.0)
         z_apex = -z_h * (1.0 / math.cos(theta) - 1.0)
         tan_t = math.tan(theta)
@@ -116,4 +120,5 @@ class HingeShape(JointShape):
     def draw(self, layout, op):
         layout.prop(op, "hinge_rom")
         layout.prop(op, "hinge_tongue")
+        layout.prop(op, "hinge_relief")
         layout.prop(op, "segments")

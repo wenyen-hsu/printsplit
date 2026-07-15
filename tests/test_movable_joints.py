@@ -202,7 +202,8 @@ def test_ball_socket_retention():
 
 def test_hinge_bends_and_stops():
     obj = _make_box(3.0, 2.0, 2.0)
-    male, female = _generate('HINGE', obj=obj, hinge_rom=math.radians(45))
+    male, female = _generate('HINGE', obj=obj, hinge_rom=math.radians(45),
+                         hinge_relief=True)
     assert is_watertight_mesh(male.data)
     assert is_watertight_mesh(female.data)
     assert _rest_intersection(male, female) < 1e-6
@@ -226,6 +227,24 @@ def test_hinge_bends_and_stops():
     # pass through the narrower V-slot.
     ix = _moved_ix(male, female, offset=Vector((0, 0, 0.05)))
     assert ix > 1e-9, "hinge barrel should be retained by the groove"
+
+
+def test_hinge_relief_off_keeps_material():
+    """Default (relief off): only the groove and V-slot are carved; the
+    seam face keeps far more material than the full-ROM relief."""
+    obj = _make_box(3.0, 2.0, 2.0)
+    male, female = _generate('HINGE', obj=obj, hinge_relief=False)
+    vb_intact = mesh_volume(female.data)
+    assert is_watertight_mesh(female.data)
+    ix = _moved_ix(male, female, offset=Vector((0, 0, 0.05)))
+    assert ix > 1e-9, "barrel retention must not depend on the relief"
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    obj = _make_box(3.0, 2.0, 2.0)
+    male, female = _generate('HINGE', obj=obj, hinge_relief=True)
+    vb_dished = mesh_volume(female.data)
+    assert vb_intact > vb_dished + 0.05, (
+        f"relief off should keep material: {vb_intact} vs {vb_dished}")
 
 
 # ---------------------------------------------------------- DOUBLE BALL
