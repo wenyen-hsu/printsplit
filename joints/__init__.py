@@ -10,6 +10,7 @@ from .double_ball import DoubleBallShape
 from .dovetail import DovetailShape
 from .hinge import HingeShape
 from .swivel import SwivelShape
+from .trapezoid import TrapezoidShape
 
 _registry = {}
 # EnumProperty item tuples must stay referenced from Python (Blender
@@ -34,6 +35,7 @@ def shape_enum_items():
 register_shape(DovetailShape)
 register_shape(CylinderShape)
 register_shape(CrossKeyShape)
+register_shape(TrapezoidShape)
 register_shape(BallSocketShape)
 register_shape(HingeShape)
 register_shape(SwivelShape)

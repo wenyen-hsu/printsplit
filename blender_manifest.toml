@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "printsplit"
-version = "0.2.0"
+version = "0.2.3"
 name = "PrintSplit"
 tagline = "Split meshes and generate interlocking joints for 3D printing"
 maintainer = "Wen Hsu <vm3jp6u04@gmail.com>"

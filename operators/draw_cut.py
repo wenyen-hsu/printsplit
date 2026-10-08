@@ -17,13 +17,13 @@ _RDP_EPSILON = 3.0
 _MAX_SEGMENTS = 60
 
 
-def stroke_to_planes(region, rv3d, points_2d, focus_world, extend):
-    """Build world-space CutPlanes from a 2D stroke.
+def stroke_to_planes(region, rv3d, points_2d, focus_world):
+    """Build world-space CutPlanes from a 2D stroke. The slabs end at the
+    stroke's ends; the cut itself completes every part the stroke touches
+    (see core.cutting).
 
     focus_world: a point near the object (used to place ray far-points and
     miter plane anchors at a meaningful depth).
-    extend: how far past the stroke ends to push the end miter planes so a
-    stroke that visually crosses the model always severs it.
     """
     rays = []
     for p in points_2d:
@@ -37,18 +37,16 @@ def stroke_to_planes(region, rv3d, points_2d, focus_world, extend):
         depth = max((focus_world - origin).dot(direction), 1.0)
         far.append(origin + direction * depth)
 
-    # Cutting plane per segment, consistently oriented.
+    # Cutting plane per segment. plane_from_rays orients every normal to
+    # the same side of the stroke's travel, so side A is one side of the
+    # whole stroke even across sharp turns.
     seg_planes = []
-    prev_no = None
     for i in range(len(rays) - 1):
         (oa, da), (ob, db) = rays[i], rays[i + 1]
         plane = plane_from_rays(oa, da, ob, db)
         if plane is None:
             continue
         co, no = plane
-        if prev_no is not None and prev_no.dot(no) < 0.0:
-            no = -no
-        prev_no = no
         seg_planes.append((i, co, no))
 
     if not seg_planes:
@@ -77,22 +75,14 @@ def stroke_to_planes(region, rv3d, points_2d, focus_world, extend):
             miters.append(acc.normalized())
 
     planes = []
-    for idx, (i, co, no) in enumerate(seg_planes):
+    for i, co, no in seg_planes:
         m_start = miters[i]
         m_end = miters[i + 1]
-        start_co = far[i]
-        end_co = far[i + 1]
-        first = idx == 0
-        last = idx == len(seg_planes) - 1
-        if first and m_start is not None:
-            start_co = start_co - m_start * extend
-        if last and m_end is not None:
-            end_co = end_co + m_end * extend
         planes.append(CutPlane(
             co, no,
-            start_co=start_co if m_start is not None else None,
+            start_co=far[i] if m_start is not None else None,
             start_no=m_start,
-            end_co=end_co if m_end is not None else None,
+            end_co=far[i + 1] if m_end is not None else None,
             end_no=-m_end if m_end is not None else None,
         ))
     return planes
@@ -228,10 +218,8 @@ class PRINTSPLIT_OT_draw_cut(bpy.types.Operator):
 
         corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
         focus = sum(corners, Vector((0.0, 0.0, 0.0))) / 8.0
-        bbox_diag = obj.dimensions.length or 1.0
         planes = stroke_to_planes(
-            context.region, context.region_data, points,
-            focus_world=focus, extend=bbox_diag * 2.0)
+            context.region, context.region_data, points, focus_world=focus)
         if not planes:
             self.report({'WARNING'}, "Degenerate stroke")
             return {'CANCELLED'}

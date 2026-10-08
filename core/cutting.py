@@ -6,6 +6,12 @@ along the stroke direction by two miter planes forming a slab. Cutting is
 pure bmesh (``bisect_plane``), never boolean, so it is deterministic,
 kerf-free and stable on dense sculpts.
 
+The slabs are the drawn stroke. Where the planes cross the mesh they form
+closed sections ("islands": a finger, a leg); the cut severs every island
+the stroke touches, all of it even where the stroke stops short of the
+silhouette, and leaves the islands it does not touch alone, so parts that
+merely line up with the stroke are not cut.
+
 Everything here is context-free: functions take explicit meshes/planes so
 they run headless in ``blender --background``.
 """
@@ -65,6 +71,11 @@ class CutPlane:
                 return False
         return True
 
+    def face_meets(self, face, tol):
+        """The face straddles or touches the plane."""
+        ds = [self.distance(v.co) for v in face.verts]
+        return min(ds) < tol and max(ds) > -tol
+
     def face_straddles(self, face, dist):
         pos = neg = False
         for v in face.verts:
@@ -79,16 +90,17 @@ class CutPlane:
 
 
 def candidate_face_indices(mesh, planes, dist, tol):
-    """NumPy prefilter over an (unmodified) Mesh: polygon indices that
-    straddle any cutting plane inside its slab. Keeps the per-segment
-    Python work proportional to the cut band, not the whole mesh."""
+    """NumPy prefilter over an (unmodified) Mesh: the polygon indices that
+    meet any cutting plane inside its :func:`reach_planes` slab, and those
+    meeting it inside its drawn slab. Keeps the per-segment Python work
+    proportional to the cut band, not the whole mesh."""
     import numpy as np
 
     vcount = len(mesh.vertices)
     lcount = len(mesh.loops)
     pcount = len(mesh.polygons)
     if not (vcount and lcount and pcount):
-        return set()
+        return set(), set()
 
     coords = np.empty(vcount * 3, dtype=np.float32)
     mesh.vertices.foreach_get("co", coords)
@@ -107,21 +119,166 @@ def candidate_face_indices(mesh, planes, dist, tol):
         return (np.minimum.reduceat(dl, loop_start),
                 np.maximum.reduceat(dl, loop_start))
 
-    mask = np.zeros(pcount, dtype=bool)
-    for pl in planes:
+    reach = np.zeros(pcount, dtype=bool)
+    drawn = np.zeros(pcount, dtype=bool)
+    last = len(planes) - 1
+    for k, pl in enumerate(planes):
         fmin, fmax = per_face_minmax(pl.co, pl.no)
         # Superset: faces strictly straddling the plane AND faces merely
         # touching it (a cut may run along existing edges, e.g. a sphere
         # equator loop).
         m = (fmin < tol) & (fmax > -tol)
+        r = m
         if pl.start_co is not None:
             _, smax = per_face_minmax(pl.start_co, pl.start_no)
-            m &= smax >= -tol
+            m = m & (smax >= -tol)
+            if k != 0:  # the reach runs on past the stroke's start
+                r = r & (smax >= -tol)
         if pl.end_co is not None:
             _, emax = per_face_minmax(pl.end_co, pl.end_no)
-            m &= emax >= -tol
-        mask |= m
-    return set(np.nonzero(mask)[0].tolist())
+            m = m & (emax >= -tol)
+            if k != last:  # ... and past its end
+                r = r & (emax >= -tol)
+        reach |= r
+        drawn |= m
+    return (set(np.nonzero(reach)[0].tolist()),
+            set(np.nonzero(drawn)[0].tolist()))
+
+
+def reach_planes(planes):
+    """The planes with the stroke's two open ends unbounded: the reach
+    within which a touched island is severed completely."""
+    reach = [CutPlane(p.co, p.no, p.start_co, p.start_no, p.end_co, p.end_no)
+             for p in planes]
+    reach[0].start_co = reach[0].start_no = None
+    reach[-1].end_co = reach[-1].end_no = None
+    return reach
+
+
+def _band_islands(band):
+    """Edge-connected patches of the ``band`` faces: each is one closed
+    section through the mesh, or several that touch."""
+    band_set = set(band)
+    seen = set()
+    islands = []
+    for start in band:
+        if start in seen:
+            continue
+        seen.add(start)
+        island = [start]
+        stack = [start]
+        while stack:
+            f = stack.pop()
+            for e in f.edges:
+                for nf in e.link_faces:
+                    if nf in band_set and nf not in seen:
+                        seen.add(nf)
+                        island.append(nf)
+                        stack.append(nf)
+        islands.append(island)
+    return islands
+
+
+def _edge_crossing(edge, plane):
+    """Where ``edge`` crosses ``plane``, or None. On-plane vertices count
+    as below it, a consistent tie-break that keeps sections closed."""
+    a = edge.verts[0].co
+    b = edge.verts[1].co
+    da = plane.distance(a)
+    db = plane.distance(b)
+    if (da > 0.0) == (db > 0.0):
+        return None
+    return a.lerp(b, da / (da - db))
+
+
+def _face_section(face, plane):
+    """Segments where ``face`` crosses ``plane``, as point pairs."""
+    pts = [p for p in (_edge_crossing(e, plane) for e in face.edges)
+           if p is not None]
+    if len(pts) > 2:  # concave face: pair the crossings along the line
+        axis = pts[1] - pts[0]
+        pts.sort(key=axis.dot)
+    return list(zip(pts[0::2], pts[1::2]))
+
+
+def _nested_islands(rest, severed, planes, reach, tol):
+    """The islands of ``rest`` (untouched) lying inside the section of a
+    ``severed`` island, like the inner wall of a hollow shell: left uncut
+    it would run straight through the cap.
+
+    Untouched islands only lie past the stroke's ends, where the end plane
+    runs on unbounded. A ray from such an island outward, away from the
+    stroke, stays on that one plane, so crossing a severed island's
+    section an odd number of times means it is enclosed."""
+    zones = []
+    if planes[0].start_co is not None:
+        zones.append((0, planes[0].start_co, planes[0].start_no))
+    if planes[-1].end_co is not None:
+        zones.append((len(planes) - 1, planes[-1].end_co, planes[-1].end_no))
+
+    severed = list(severed)
+    rest = list(rest)
+    nested = []
+    for k, m_co, m_no in zones:
+        pl = reach[k]
+        out = -(m_no - pl.no * m_no.dot(pl.no))
+        if out.length < 1e-12:
+            continue
+        out.normalize()
+        side = pl.no.cross(out)
+        cache = {}
+
+        def segments(island):
+            segs = cache.get(id(island))
+            if segs is None:
+                segs = [
+                    (a, a.dot(out), a.dot(side), b.dot(out), b.dot(side))
+                    for f in island
+                    for a, b in _face_section(f, pl)
+                ]
+                cache[id(island)] = segs
+            return segs
+
+        grew = True
+        while rest and grew:
+            grew = False
+            for island in rest[:]:
+                start = next(
+                    (s for s in segments(island)
+                     if (s[0] - m_co).dot(m_no) < 0.0
+                     and pl.in_slab(s[0], tol)),
+                    None)
+                if start is None:
+                    continue
+                x0, y0 = start[1], start[2]
+                for other in severed:
+                    hits = 0
+                    for _, xa, ya, xb, yb in segments(other):
+                        if (ya > y0) != (yb > y0):
+                            if xa + (xb - xa) * (y0 - ya) / (yb - ya) > x0:
+                                hits += 1
+                    if hits % 2:
+                        rest.remove(island)
+                        severed.append(island)
+                        nested.append(island)
+                        grew = True
+                        break
+    return nested
+
+
+def _severed_faces(band, touching, planes, reach, tol):
+    """Faces of the band islands the cut severs: those the stroke touches,
+    plus untouched ones nested inside them."""
+    severed = []
+    rest = []
+    for island in _band_islands(band):
+        if any(f in touching for f in island):
+            severed.append(island)
+        else:
+            rest.append(island)
+    if rest and severed:
+        severed.extend(_nested_islands(rest, severed, planes, reach, tol))
+    return {f for island in severed for f in island}
 
 
 def _slab_index_for_point(planes, point, tol):
@@ -137,17 +294,21 @@ def _slab_index_for_point(planes, point, tol):
     return best
 
 
-def cut_bmesh(bm, planes, cut_id, *, dist=1e-6, candidates=None):
+def cut_bmesh(bm, planes, cut_id, *, dist=1e-6, candidates=None,
+              touching=None):
     """Cut ``bm`` by the plane sequence and return two NEW bmeshes
     (side A: positive plane side, side B: negative), each watertight-capped
     along the seam and with cap faces tagged ``printsplit_cut_id=cut_id``.
 
     ``bm`` is consumed as scratch space (mutated); the caller frees it.
-    ``candidates``: optional set of original face indices near the cut
-    (from :func:`candidate_face_indices`) to avoid scanning every face.
+    ``candidates`` / ``touching``: optional sets of original face indices
+    meeting the :func:`reach_planes` and the drawn ``planes`` respectively
+    (both from :func:`candidate_face_indices`), to avoid scanning every
+    face.
     Raises :class:`CutError` when the planes do not sever the mesh.
     """
     tol = dist * 4.0
+    reach = reach_planes(planes)
 
     # Create ALL custom-data layers up front: adding a layer reallocates
     # element data and invalidates every existing BMElem reference.
@@ -160,16 +321,28 @@ def cut_bmesh(bm, planes, cut_id, *, dist=1e-6, candidates=None):
     if bm.faces.layers.int.get(CUT_ID_FACE_ATTR) is None:
         bm.faces.layers.int.new(CUT_ID_FACE_ATTR)
 
+    def meeting(faces, plane_list):
+        return [f for f in faces
+                if any(pl.face_meets(f, tol) and pl.face_touches_slab(f, tol)
+                       for pl in plane_list)]
+
     bm.faces.ensure_lookup_table()
     if candidates is None:
-        pool = set(bm.faces)
+        band = meeting(bm.faces, reach)
     else:
-        pool = {bm.faces[i] for i in candidates}
+        band = [bm.faces[i] for i in candidates]
+    if touching is None:
+        touching = set(meeting(band, planes))
+    else:
+        touching = {bm.faces[i] for i in touching}
+    pool = _severed_faces(band, touching, planes, reach, tol)
+    if not pool:
+        raise CutError("The stroke does not intersect the mesh")
 
     # Bisect segment by segment. Seam identification happens AFTER all
     # bisects, purely geometrically: custom-data tags do not reliably
     # survive later bisects splitting earlier cut edges at slab junctions.
-    for plane in planes:
+    for plane in reach:
         faces = [
             f for f in pool
             if f.is_valid
@@ -209,7 +382,7 @@ def cut_bmesh(bm, planes, cut_id, *, dist=1e-6, candidates=None):
             if v in seen_verts:
                 continue
             seen_verts.add(v)
-            if any(abs(pl.distance(v.co)) <= tol for pl in planes):
+            if any(abs(pl.distance(v.co)) <= tol for pl in reach):
                 weld_verts.append(v)
     if weld_verts:
         bmesh.ops.remove_doubles(bm, verts=weld_verts, dist=tol)
@@ -218,7 +391,7 @@ def cut_bmesh(bm, planes, cut_id, *, dist=1e-6, candidates=None):
     # (both endpoints within tolerance) inside that segment's slab. This
     # covers bisect-created edges, halves of edges re-split at slab
     # junctions, and pre-existing edges the cut runs along (e.g. a sphere
-    # equator loop).
+    # equator loop). The seam layer stores that segment's index + 1.
     cut_edges = []
     seen = set()
     for f in pool:
@@ -233,11 +406,11 @@ def cut_bmesh(bm, planes, cut_id, *, dist=1e-6, candidates=None):
             a = e.verts[0].co
             b = e.verts[1].co
             mid = (a + b) * 0.5
-            for pl in planes:
+            for k, pl in enumerate(reach):
                 if (abs(pl.distance(a)) <= tol
                         and abs(pl.distance(b)) <= tol
                         and pl.in_slab(mid, tol)):
-                    e[seam_layer] = 1
+                    e[seam_layer] = k + 1
                     cut_edges.append(e)
                     break
 
@@ -245,7 +418,7 @@ def cut_bmesh(bm, planes, cut_id, *, dist=1e-6, candidates=None):
         raise CutError("The stroke does not intersect the mesh")
     bmesh.ops.split_edges(bm, edges=cut_edges)
 
-    side_a, side_b = _classify_sides(bm, planes, seam_layer, tol)
+    side_a, side_b = _classify_sides(bm, reach, seam_layer, tol)
     if not side_a or not side_b:
         raise CutError("The cut did not separate the mesh into two parts")
 
@@ -296,15 +469,15 @@ def cut_object(obj, planes_world, cut_id, *, dist=None):
         planes.append(CutPlane(co, no, s_co, s_no, e_co, e_no))
 
     tol = dist * 4.0
-    candidates = candidate_face_indices(mesh, planes, dist, tol)
-    if not candidates:
+    candidates, touching = candidate_face_indices(mesh, planes, dist, tol)
+    if not touching:
         raise CutError("The stroke does not intersect the mesh")
 
     bm = bmesh.new()
     bm.from_mesh(mesh)
     try:
-        bm_a, bm_b = cut_bmesh(bm, planes, cut_id,
-                               dist=dist, candidates=candidates)
+        bm_a, bm_b = cut_bmesh(bm, planes, cut_id, dist=dist,
+                               candidates=candidates, touching=touching)
     finally:
         bm.free()
 
@@ -330,8 +503,12 @@ def cut_object(obj, planes_world, cut_id, *, dist=None):
 
 def _classify_sides(bm, planes, seam_layer, tol):
     """Group faces into two sides via flood fill that never crosses the
-    (already split) seam. Each connected component is assigned by the sign
-    of its faces' distance to the local slab's cutting plane."""
+    (already split) seam. A component bordering the seam takes the side of
+    its faces along it; bordering it from both sides means the cut runs
+    into the component without severing it. A component clear of the seam
+    (untouched, e.g. the uncut rest of a body a limb was cut from lying
+    across the plane) goes by the sign of its faces' distance to the local
+    slab's cutting plane."""
     side_a = []
     side_b = []
     visited = set()
@@ -341,25 +518,41 @@ def _classify_sides(bm, planes, seam_layer, tol):
         component = []
         stack = [start]
         visited.add(start)
+        pos = neg = False
         while stack:
             f = stack.pop()
             component.append(f)
             for e in f.edges:
-                if e[seam_layer] == 1:
+                k = e[seam_layer]
+                if k:
+                    pl = planes[k - 1]
+                    d = max((pl.distance(v.co) for v in f.verts), key=abs)
+                    if d > tol:
+                        pos = True
+                    elif d < -tol:
+                        neg = True
                     continue
                 for nf in e.link_faces:
                     if nf not in visited:
                         visited.add(nf)
                         stack.append(nf)
 
-        sign = 0.0
-        # Sample a handful of faces; near-plane faces are ambiguous.
-        for f in component[: 50]:
-            center = f.calc_center_median()
-            plane = planes[_slab_index_for_point(planes, center, tol)]
-            d = plane.distance(center)
-            if abs(d) > abs(sign):
-                sign = d
+        if pos and neg:
+            raise CutError(
+                "The cut does not separate the part it crosses: the part "
+                "is still connected around it. Draw across that "
+                "connection too")
+        if pos or neg:
+            sign = 1.0 if pos else -1.0
+        else:
+            sign = 0.0
+            # Sample a handful of faces; near-plane faces are ambiguous.
+            for f in component[: 50]:
+                center = f.calc_center_median()
+                plane = planes[_slab_index_for_point(planes, center, tol)]
+                d = plane.distance(center)
+                if abs(d) > abs(sign):
+                    sign = d
         if sign >= 0.0:
             side_a.extend(component)
         else:
@@ -400,7 +593,7 @@ def _cap_seam_holes(bm, seam_layer, cut_id, tol):
     cut_layer = bm.faces.layers.int.get(CUT_ID_FACE_ATTR)
 
     seam_boundary = [
-        e for e in bm.edges if e.is_boundary and e[seam_layer] == 1
+        e for e in bm.edges if e.is_boundary and e[seam_layer]
     ]
     cap_faces = []
     for verts in boundary_loops(seam_boundary):
@@ -422,5 +615,5 @@ def _cap_seam_holes(bm, seam_layer, cut_id, tol):
             # Sharp seam so smooth shading keeps a crisp edge at the cut;
             # only the seam-loop edges, not interior triangulation edges.
             for e in f.edges:
-                if e[seam_layer] == 1:
+                if e[seam_layer]:
                     e.smooth = False

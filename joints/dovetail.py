@@ -57,12 +57,18 @@ class DovetailShape(JointShape):
     assembly = 'SLIDE'
 
     def _dims(self, size, params):
+        """(male Y range, cutter Y range, draft anchor Y)."""
+        half_c = max(size.channel, size.thickness) / 2.0
+        # Channel: up to just past this part's surface (probed by the
+        # operator) so it never reaches a neighbouring part.
+        lo, hi = params.get('span_y', (-half_c, half_c))
         if params.get('style', 'RAIL') == 'RAIL':
-            # Full-width rail: spans the whole cut, later trimmed to the
-            # model surface. Anchor the draft at the rail's wide end.
-            half = max(size.channel, size.thickness) / 2.0
-            return half, half
-        return size.thickness / 2.0, max(size.channel, size.thickness) / 2.0
+            # Full-width rail, later trimmed to the model surface. Anchor
+            # the draft at the rail's wide end.
+            return (lo, hi), (lo, hi), lo
+        half_t = size.thickness / 2.0
+        return ((-half_t, half_t), (min(lo, -half_t), max(hi, half_t)),
+                -half_t)
 
     def needs_trim(self, params):
         """RAIL pegs are built overlong and must be clipped to the model
@@ -70,25 +76,24 @@ class DovetailShape(JointShape):
         return params.get('style', 'RAIL') == 'RAIL'
 
     def build_male(self, size, params):
-        half_t, half_c = self._dims(size, params)
-        y_half = half_c if self.needs_trim(params) else half_t
+        (y_min, y_max), _cutter, anchor = self._dims(size, params)
         return _build_prism(
             size.width, size.depth, size.thickness, size.embed,
             params['flare'], params['draft'],
-            y_min=-y_half, y_max=y_half,
-            draft_anchor=-half_t,
+            y_min=y_min, y_max=y_max,
+            draft_anchor=anchor,
         )
 
     def build_cutter(self, size, params, clearance):
-        half_t, half_c = self._dims(size, params)
+        _male, (y_min, y_max), anchor = self._dims(size, params)
         return _build_prism(
             size.width + 2.0 * clearance,
             size.depth + clearance,
             size.thickness,
             size.embed,
             params['flare'], params['draft'],
-            y_min=-half_c, y_max=half_c,
-            draft_anchor=-half_t,
+            y_min=y_min, y_max=y_max,
+            draft_anchor=anchor,
         )
 
     def draw(self, layout, op):

@@ -12,7 +12,7 @@ from printsplit.core.cutting import CutPlane, cut_object
 from printsplit.operators.draw_cut import stroke_to_planes
 from printsplit.utils.mesh_utils import is_watertight_mesh, mesh_volume
 
-from test_cutting import make_cube
+from test_cutting import make_cube, make_prongs
 
 
 class _FakeRegion:
@@ -66,7 +66,7 @@ def test_straight_stroke_cuts_cube():
     points = [_screen(-1.8, 0.25), _screen(1.8, 0.25)]
     planes = stroke_to_planes(
         region, rv3d, points,
-        focus_world=Vector((0, 0, 0)), extend=7.0)
+        focus_world=Vector((0, 0, 0)))
     assert len(planes) == 1
 
     obj_a, obj_b = cut_object(obj, planes, cut_id=1)
@@ -92,7 +92,7 @@ def test_freehand_stroke_cuts_cube():
     points = [_screen(-1.8, 0.6), _screen(0.0, -0.4), _screen(1.8, 0.6)]
     planes = stroke_to_planes(
         region, rv3d, points,
-        focus_world=Vector((0, 0, 0)), extend=7.0)
+        focus_world=Vector((0, 0, 0)))
     assert len(planes) == 2
     # The two slabs must share the junction miter plane.
     assert planes[0].end_co is not None and planes[1].start_co is not None
@@ -114,10 +114,46 @@ def test_stroke_missing_mesh_errors():
     points = [_screen(-1.8, 1.9), _screen(1.8, 1.9)]  # above the cube
     planes = stroke_to_planes(
         region, rv3d, points,
-        focus_world=Vector((0, 0, 0)), extend=7.0)
+        focus_world=Vector((0, 0, 0)))
     try:
         cut_object(obj, planes, cut_id=1)
     except CutError:
         pass
     else:
         raise AssertionError("expected CutError for a stroke off the mesh")
+
+
+def test_stroke_cuts_only_the_part_under_it():
+    """Front view of a U shape: a stroke across the left prong cuts it,
+    and the right prong, on the same plane past the stroke's end, stays
+    whole."""
+    obj = make_prongs()
+    bpy.context.view_layer.update()
+    region, rv3d = _FakeRegion(), _FakeRV3D(ortho_scale=8.0)
+    points = [_screen(-3.5, 2.0, 8.0), _screen(-0.5, 2.0, 8.0)]
+    planes = stroke_to_planes(
+        region, rv3d, points, focus_world=Vector((0, 0, 0)))
+
+    obj_a, obj_b = cut_object(obj, planes, cut_id=1)
+    assert is_watertight_mesh(obj_a.data)
+    assert is_watertight_mesh(obj_b.data)
+    got = sorted([mesh_volume(obj_a.data), mesh_volume(obj_b.data)])
+    for e, g in zip([4.0, 24.0], got):
+        assert math.isclose(e, g, rel_tol=1e-4), f"expected {e}, got {g}"
+
+
+def test_stroke_ending_inside_severs_whole_part():
+    obj = make_cube(size=2.0, subdivisions=3)
+    bpy.context.view_layer.update()
+    region, rv3d = _FakeRegion(), _FakeRV3D()
+    # From outside the cube to its middle only.
+    points = [_screen(1.8, 0.25), _screen(0.0, 0.25)]
+    planes = stroke_to_planes(
+        region, rv3d, points, focus_world=Vector((0, 0, 0)))
+
+    obj_a, obj_b = cut_object(obj, planes, cut_id=1)
+    assert is_watertight_mesh(obj_a.data)
+    assert is_watertight_mesh(obj_b.data)
+    got = sorted([mesh_volume(obj_a.data), mesh_volume(obj_b.data)])
+    for e, g in zip([3.0, 5.0], got):
+        assert math.isclose(e, g, rel_tol=1e-3), f"expected {e}, got {g}"

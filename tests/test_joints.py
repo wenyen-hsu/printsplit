@@ -109,6 +109,68 @@ def test_cylinder_joint():
     assert ix < 1e-6, f"halves overlap by {ix}"
 
 
+def test_trapezoid_joint():
+    obj_a, obj_b = _run_shape('TRAPEZOID', clearance_mm=0.3)
+    ix = _rest_intersection(obj_a, obj_b)
+    assert ix < 1e-6, f"halves overlap by {ix}"
+    # Internal key: the pocket must stay closed (never reach the surface).
+    for v in obj_b.data.vertices:
+        assert abs(v.co.x) <= 1.0 + 1e-5 and abs(v.co.y) <= 1.0 + 1e-5
+
+
+def test_joint_lands_on_the_shared_seam():
+    """Regression: one stroke across both arms of a U leaves two seams
+    with the same cut id on the U piece. The joint must sit on the seam
+    the U shares with the selected arm — not halfway between the arms,
+    floating in the gap."""
+    from printsplit.core import cross_section
+
+    bpy.ops.mesh.primitive_torus_add(
+        major_radius=1.0, minor_radius=0.25,
+        major_segments=48, minor_segments=16)
+    ring = bpy.context.active_object
+    u_piece, c_piece = cut_object(
+        ring, [CutPlane(Vector((0.5, 0, 0)), Vector((1, 0, 0)))], cut_id=1)
+    if u_piece.data.vertices[0].co.x < 0.5:
+        u_piece, c_piece = c_piece, u_piece
+    arm_a, arm_b = cut_object(
+        c_piece, [CutPlane(Vector((0, 0, 0)), Vector((0, 1, 0)))], cut_id=2)
+    bpy.context.view_layer.update()
+    arm = arm_a if sum(v.co.y for v in arm_a.data.vertices) < 0 else arm_b
+
+    faces, n_shared = cross_section.shared_seam(u_piece, arm, 1)
+    assert n_shared == 1, f"expected one shared seam, got {n_shared}"
+    section = cross_section.compute_cross_section(u_piece, 1, faces)
+    assert section.center.y < -0.5, (
+        f"joint centred off the seam at {tuple(section.center)}")
+
+    vb0 = mesh_volume(arm.data)
+    _select_pair(u_piece, arm)
+    assert bpy.ops.printsplit.generate_joint(
+        shape='TRAPEZOID', clearance_mm=0.15, solver='EXACT') == {'FINISHED'}
+    assert mesh_volume(arm.data) < vb0, "arm got no socket"
+    assert is_watertight_mesh(u_piece.data)
+    assert is_watertight_mesh(arm.data)
+
+
+def test_depth_scale_deepens_socket():
+    """Depth Scale grows how far the peg reaches into the female half."""
+    reach = {}
+    for k in (0.5, 1.5):
+        obj_a, obj_b = _cut_cube_in_half()
+        _select_pair(obj_a, obj_b)
+        assert bpy.ops.printsplit.generate_joint(
+            shape='TRAPEZOID', depth_scale=k, clearance_mm=0.15,
+            solver='EXACT') == {'FINISHED'}
+        # Cut at z=0: the peg tip is the male vertex furthest past the
+        # seam, on the side opposite the male's bulk.
+        verts = obj_a.data.vertices
+        side = 1.0 if sum(v.co.z for v in verts) > 0 else -1.0
+        reach[k] = max(-side * v.co.z for v in verts)
+        bpy.ops.wm.read_homefile(use_empty=True)
+    assert reach[1.5] > reach[0.5] * 2.0, f"depth did not scale: {reach}"
+
+
 def test_clearance_enlarges_socket():
     """Sanity inversion: at zero clearance the socket removes exactly the
     peg's volume; with clearance it removes strictly more. (Uses the

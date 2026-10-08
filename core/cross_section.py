@@ -63,15 +63,88 @@ def find_common_cut_id(obj_a, obj_b):
     return max(common) if common else None
 
 
-def compute_cross_section(obj, cut_id):
-    """Analyze the cap faces of ``cut_id`` on ``obj``. Returns a
-    CrossSection in the object's mesh-local space, or None when the object
-    has no such caps."""
+def cap_islands(obj, cut_id):
+    """Cap faces of ``cut_id`` on ``obj`` grouped into connected islands
+    (lists of face indices). One stroke that crosses a part several times
+    — e.g. both arms of a U — leaves one island per seam, all sharing the
+    same cut id."""
     mesh = obj.data
     attr = mesh.attributes.get(CUT_ID_FACE_ATTR)
     if attr is None or attr.domain != 'FACE':
-        return None
+        return []
     face_indices = [i for i, d in enumerate(attr.data) if d.value == cut_id]
+
+    parent = {}
+
+    def find(v):
+        while parent.setdefault(v, v) != v:
+            parent[v] = parent[parent[v]]
+            v = parent[v]
+        return v
+
+    for i in face_indices:
+        verts = mesh.polygons[i].vertices
+        root = find(verts[0])
+        for v in verts[1:]:
+            parent[find(v)] = root
+
+    islands = {}
+    for i in face_indices:
+        islands.setdefault(find(mesh.polygons[i].vertices[0]), []).append(i)
+    return list(islands.values())
+
+
+def _island_stats(mesh, faces):
+    """(area, area-weighted centroid) of a cap island."""
+    area = 0.0
+    center = Vector((0.0, 0.0, 0.0))
+    for i in faces:
+        poly = mesh.polygons[i]
+        area += poly.area
+        center += poly.center * poly.area
+    if area > 1e-12:
+        center /= area
+    return area, center
+
+
+def shared_seam(obj, other, cut_id):
+    """Cap faces on ``obj`` of the seam it actually shares with ``other``.
+
+    Both halves of a cut keep identical mesh-local coordinates at the
+    seam, so a mating cap island has (almost) the same centroid on both.
+    Returns (face_indices, n_shared) — the largest shared island and how
+    many shared islands exist — or (None, 0) when ``obj`` has no caps.
+    Falls back to the largest island when nothing matches (e.g. a half
+    whose transform was applied after the cut).
+    """
+    islands = cap_islands(obj, cut_id)
+    if not islands:
+        return None, 0
+    other_stats = [_island_stats(other.data, f)
+                   for f in cap_islands(other, cut_id)]
+    shared = []
+    for faces in islands:
+        area, center = _island_stats(obj.data, faces)
+        tol = max(math.sqrt(area) * 0.1, 1e-6)
+        if any((center - c).length <= tol for _a, c in other_stats):
+            shared.append((area, faces))
+    pool = shared or [(_island_stats(obj.data, f)[0], f) for f in islands]
+    pool.sort(key=lambda p: p[0], reverse=True)
+    return pool[0][1], len(shared)
+
+
+def compute_cross_section(obj, cut_id, face_indices=None):
+    """Analyze the cap faces of ``cut_id`` on ``obj`` (or just
+    ``face_indices`` — one seam island). Returns a CrossSection in the
+    object's mesh-local space, or None when the object has no such
+    caps."""
+    mesh = obj.data
+    if face_indices is None:
+        attr = mesh.attributes.get(CUT_ID_FACE_ATTR)
+        if attr is None or attr.domain != 'FACE':
+            return None
+        face_indices = [i for i, d in enumerate(attr.data)
+                        if d.value == cut_id]
     if not face_indices:
         return None
 

@@ -35,6 +35,13 @@ def _dims(size, params):
     return z_h, r_k, n_y, c
 
 
+def _span(size, params):
+    """Barrel extent along X: up to just past this part's surface (probed
+    by the operator) so it never reaches a neighbouring part."""
+    half_x = size.channel / 2.0
+    return params.get('span_x', (-half_x, half_x))
+
+
 class HingeShape(JointShape):
     id = 'HINGE'
     label = "Hinge"
@@ -62,12 +69,12 @@ class HingeShape(JointShape):
     def build_male(self, size, params):
         z_h, r_k, n_y, _c = _dims(size, params)
         seg = params['segments']
-        half_x = size.channel / 2.0
+        x0, x1 = _span(size, params)
 
         # Full-width knuckle barrel about the pivot axis.
-        bm = _solids.x_cylinder(r_k, r_k, -half_x, half_x, 0.0, z_h, seg)
+        bm = _solids.x_cylinder(r_k, r_k, x0, x1, 0.0, z_h, seg)
         # Tongue from inside the male half up into the barrel.
-        tongue = _solids.box(-half_x, half_x, -n_y / 2.0, n_y / 2.0,
+        tongue = _solids.box(x0, x1, -n_y / 2.0, n_y / 2.0,
                              -size.embed, z_h)
         return _solids.merge(bm, tongue)
 
@@ -76,13 +83,13 @@ class HingeShape(JointShape):
         seg = params['segments']
         theta = params['hinge_rom']
         delta = 0.05 * r_k
-        half_x = size.channel / 2.0
+        x0, x1 = _span(size, params)
 
         # 1. Groove: envelope relief AND the bearing bore (facet-
         #    compensated so the polygonal barrel turns at any angle).
         fs = _solids.facet_scale(seg)
         bm = _solids.x_cylinder((r_k + c) * fs, (r_k + c) * fs,
-                                -half_x, half_x, 0.0, z_h, seg)
+                                x0, x1, 0.0, z_h, seg)
         # 2. V-slot for the tongue's swing: wide at the seam, narrowing
         #    to the tongue width at the pivot — the knuckle (diameter
         #    2*z_h) can never pass it, which is the retention.
@@ -91,7 +98,7 @@ class HingeShape(JointShape):
         slot = _solids.profile_prism(
             [(-y_bot, -delta), (y_bot, -delta),
              (y_top, z_h + 0.3 * r_k), (-y_top, z_h + 0.3 * r_k)],
-            -half_x, half_x)
+            x0, x1)
         _solids.merge(bm, slot)
         # 3. Optional range-of-motion wedges on the seam face: the male's
         #    rotated face line is z(y) = |y|*tan(theta) - z_h*(1/cos(theta)
@@ -109,11 +116,11 @@ class HingeShape(JointShape):
         if z_edge > delta and y0 < y_max:
             right = _solids.profile_prism(
                 [(y0, -delta), (y_max, -delta), (y_max, z_edge)],
-                -half_x, half_x)
+                x0, x1)
             _solids.merge(bm, right)
             left = _solids.profile_prism(
                 [(-y_max, -delta), (-y0, -delta), (-y_max, z_edge)],
-                -half_x, half_x)
+                x0, x1)
             _solids.merge(bm, left)
         return bm
 
